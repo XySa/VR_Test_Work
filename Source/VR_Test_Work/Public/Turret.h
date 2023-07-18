@@ -34,9 +34,18 @@ class VR_TEST_WORK_API ATurret : public AActor {
 	UPROPERTY(EditAnywhere)
 	float RotationRateMultiplayer = 1.f;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Shooting")
+	UParticleSystemComponent* PMuzzleFlash;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Shooting")
+	USoundBase* FireSound;
+	
+	UPROPERTY()
+	AActor* Enemy = nullptr;
 
 	FTimerHandle ChangeTargetTimerHandle;
 	FTimerHandle TraceTimerHandle;
+	FTimerHandle ShootTimerHandle;
 
 	/* Rotation related variables**/
 	int TimerCount = 0;
@@ -44,7 +53,6 @@ class VR_TEST_WORK_API ATurret : public AActor {
 	FRotator TargetRotation;
 	FRotator RotationDelta;
 
-	
 	void UpdateLookTarget(float DeltaTime);
 	void ChangeBeamTarget();
 
@@ -53,6 +61,15 @@ class VR_TEST_WORK_API ATurret : public AActor {
 
 	UFUNCTION()
 	void BeamTrace();
+
+	UFUNCTION()
+	void CheckEnemy(AActor* HitActor);
+
+	UFUNCTION()
+	void FollowEnemy(float DeltaTime);
+
+	UFUNCTION()
+	void Fire();
 
 public:
 	// Sets default values for this actor's properties
@@ -69,41 +86,4 @@ protected:
 public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
-
-	// Function to rotate the turret towards the target
-	void RotateTowardsTarget(AActor* Target);
-
-	// Function to fire a projectile
-	void Fire();
-
-	// The speed at which the turret rotates
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turret")
-	float RotationSpeed;
-
-	// The projectile to fire
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turret")
-	TSubclassOf<class AProjectile> ProjectileClass;
-
-	// The speed of the projectile
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turret")
-	float ProjectileSpeed;
-
-	// The location from which the projectile is fired
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turret")
-	USceneComponent* FireLocation;
-
-	// The range within which the turret can detect targets
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turret")
-	float DetectionRange;
-
-	// The time between shots
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turret")
-	float FireRate;
-
-private:
-	// The target that the turret is aiming at
-	AActor* OutTarget;
-
-	// The time since the turret last fired
-	float TimeSinceLastShot;
 };

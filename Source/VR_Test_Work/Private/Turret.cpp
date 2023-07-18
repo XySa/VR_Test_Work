@@ -3,10 +3,12 @@
 
 #include "Turret.h"
 
+#include "CharacterInterface.h"
 #include "Projectile.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "TurretAnimInterface.h"
+#include "Particles/ParticleSystemComponent.h"
 
 #define OUT
 // Sets default values
@@ -34,17 +36,9 @@ ATurret::ATurret() {
 
 	SetBeamLenght(BeamLenght);
 
-	// Set default rotation speed
-	RotationSpeed = 10.0f;
-
-	// Set default fire rate
-	FireRate = 1.0f;
-
-	// Set default detection range
-	DetectionRange = 1000.0f;
-
-	// Initialize time since last shot
-	TimeSinceLastShot = 0.0f;
+	PMuzzleFlash = CreateDefaultSubobject<UParticleSystemComponent>(TEXT("MuzzleFlash"));
+	PMuzzleFlash->SetupAttachment(TurretMeshComponent, TEXT("BeamSocket"));
+	PMuzzleFlash->SetAutoActivate(false);
 }
 
 // Called when the game starts or when spawned
@@ -59,32 +53,23 @@ void ATurret::BeginPlay() {
 void ATurret::Tick(float DeltaTime) {
 	Super::Tick(DeltaTime);
 
-	UpdateLookTarget(DeltaTime);
-
-	// Update the time since the turret last fired
-	TimeSinceLastShot += DeltaTime;
-
-	// Find the closest character within the detection range
-	TArray<AActor*> FoundActors;
-	UGameplayStatics::GetAllActorsOfClass(GetWorld(), APawn::StaticClass(), FoundActors);
-
-	float ClosestDistance = DetectionRange;
-	for (AActor* Actor : FoundActors) {
-		float Distance = (Actor->GetActorLocation() - GetActorLocation()).Size();
-		if (Distance < ClosestDistance) {
-			ClosestDistance = Distance;
-			OutTarget = Actor;
-		}
+	if (Enemy) {
+		FollowEnemy(DeltaTime);
+	} else {
+		UpdateLookTarget(DeltaTime);
 	}
+}
 
-	// If a target is found, rotate towards it and fire if possible
-	if (OutTarget != nullptr) {
-		RotateTowardsTarget(OutTarget);
+void ATurret::FollowEnemy(float DeltaTime) {
+	FVector Start = TurretMeshComponent->GetSocketLocation("BeamSocket");
+	FVector End = Enemy->GetActorLocation();
 
-		if (TimeSinceLastShot >= FireRate) {
-			Fire();
-			TimeSinceLastShot = 0.0f;
-		}
+	FRotator RotationToEnemy = UKismetMathLibrary::FindLookAtRotation(Start, End);
+
+	LookAtRotation = FMath::RInterpTo(LookAtRotation, RotationToEnemy, DeltaTime, 10);
+
+	if (TurretMeshComponent->GetAnimInstance()->Implements<UTurretAnimInterface>()) {
+		ITurretAnimInterface::Execute_UpdateLookAtRotation(TurretMeshComponent->GetAnimInstance(), LookAtRotation);
 	}
 }
 
@@ -118,7 +103,7 @@ void ATurret::ChangeBeamTarget() {
 
 void ATurret::SetBeamLenght(float Lenght) {
 	Beam->SetRelativeScale3D(FVector(Lenght / 200, Beam->GetRelativeScale3D().Y, Beam->GetRelativeScale3D().Z));
-	Beam->SetRelativeLocation(FVector(Lenght / (-1.5), 0, 0));
+	Beam->SetRelativeLocation(FVector(Lenght / -1.5, 0, 0));
 }
 
 void ATurret::BeamTrace() {
@@ -132,34 +117,48 @@ void ATurret::BeamTrace() {
 	bool bHit = GetWorld()->LineTraceSingleByChannel(OUT HitResult, Start, End, ECC_Camera, CollisionQueryParams);
 	if (bHit) {
 		SetBeamLenght(HitResult.Distance);
+		CheckEnemy(HitResult.GetActor());
 	} else {
 		SetBeamLenght(BeamLenght);
 	}
 }
 
-
-void ATurret::RotateTowardsTarget(AActor* Target) {
-	// Get the direction to the target
-	FVector Direction = Target->GetActorLocation() - GetActorLocation();
-	Direction.Normalize();
-
-	// Calculate the new rotation
-	FRotator NewRotation = Direction.Rotation();
-	NewRotation.Pitch = 0.0f; // Keep the turret level
-	NewRotation.Roll = 0.0f;
-
-	// Rotate the turret
-	FRotator CurrentRotation = FMath::RInterpConstantTo(GetActorRotation(), NewRotation, GetWorld()->GetDeltaSeconds(), RotationSpeed);
-	SetActorRotation(CurrentRotation);
+void ATurret::CheckEnemy(AActor* HitActor) {
+	if (HitActor->Implements<UCharacterInterface>()) {
+		bool bEnemy = ICharacterInterface::Execute_IsEnemy(HitActor);
+		if (bEnemy) {
+			if (!Enemy) {
+				Enemy = HitActor;
+			}
+			//Start Shooting
+			GetWorldTimerManager().SetTimer(ShootTimerHandle, this, &ATurret::Fire, .4f, true, .4f);
+			UE_LOG(LogTemp, Warning, TEXT("Enemy"));
+		}
+	} else {
+		if (Enemy) {
+			//Stop shooting
+			//Enemy = nullptr;
+			//GetWorldTimerManager().ClearTimer(ShootTimerHandle);
+		}
+	}
 }
 
-void ATurret::Fire() {
-	// Check if a projectile class has been set
-	if (ProjectileClass != nullptr) {
-		// Create a new projectile
-		AProjectile* Projectile = GetWorld()->SpawnActor<AProjectile>(ProjectileClass, FireLocation->GetComponentLocation(), FireLocation->GetComponentRotation());
 
-		// Set the projectile's speed
-		Projectile->SetSpeed(ProjectileSpeed);
+void ATurret::Fire() {
+	//Shoot Turret Projectile
+	UGameplayStatics::PlaySoundAtLocation(this, FireSound, PMuzzleFlash->GetComponentLocation());
+	PMuzzleFlash->Activate(true);
+
+	FHitResult HitResult;
+	FVector Start = TurretMeshComponent->GetSocketLocation("BeamSocket");
+	FVector End = Start + Beam->GetForwardVector() * BeamLenght;
+
+	FCollisionQueryParams CollisionQueryParams;
+	CollisionQueryParams.AddIgnoredActor(this);
+
+	bool bHit = GetWorld()->LineTraceSingleByChannel(OUT HitResult, Start, End, ECC_Camera, CollisionQueryParams);
+	if (bHit) {
+		FPointDamageEvent PointDamageEvent(10.f, HitResult, Beam->GetForwardVector(), nullptr);
+		HitResult.GetActor()->TakeDamage(10.f, PointDamageEvent, GetInstigatorController(), this);
 	}
 }
